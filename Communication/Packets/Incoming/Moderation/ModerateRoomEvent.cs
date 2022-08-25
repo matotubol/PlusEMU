@@ -1,6 +1,7 @@
 ﻿using Plus.Communication.Packets.Outgoing.Navigator;
 using Plus.Communication.Packets.Outgoing.Rooms.Settings;
 using Plus.Database;
+using Dapper;
 using Plus.HabboHotel.GameClients;
 using Plus.HabboHotel.Rooms;
 
@@ -37,20 +38,33 @@ internal class ModerateRoomEvent : IPacketEvent
             room.ClearTags();
         if (room.HasActivePromotion)
             room.EndPromotion();
-        using (var dbClient = _database.GetQueryReactor())
+        using (var connection = _database.Connection())
         {
             if (setName && setLock)
             {
-                dbClient.RunQuery("UPDATE `rooms` SET `caption` = 'Inappropriate to Hotel Management', `description` = 'Inappropriate to Hotel Management', `tags` = '', `state` = '1' WHERE `id` = '" +
-                                  room.RoomId + "' LIMIT 1");
+                connection.Execute("UPDATE rooms SET caption = @caption, description = @description, tags = @tags, state = @state WHERE roomId = @roomId LIMIT 1", new {
+                    roomId = room.RoomId,
+                    caption = room.Name,
+                    state = 1,
+                    tags = "",
+                    description = room.Description
+                });
             }
             else if (setName)
             {
-                dbClient.RunQuery("UPDATE `rooms` SET `caption` = 'Inappropriate to Hotel Management', `description` = 'Inappropriate to Hotel Management', `tags` = '' WHERE `id` = '" + room.RoomId +
-                                  "' LIMIT 1");
+                connection.Execute("UPDATE rooms SET caption = @caption, description = @description, tags = @tags WHERE id = roomId LIMIT 1", new
+                {
+                    roomId = room.RoomId,
+                    caption = room.Name,
+                    description = room.Description,
+                    tags = room.Tags
+                });
             }
             else if (setLock)
-                dbClient.RunQuery("UPDATE `rooms` SET `state` = '1', `tags` = '' WHERE `id` = '" + room.RoomId + "' LIMIT 1");
+                connection.Execute("UPDATE rooms SET state = 1, tags = '' WHERE id = @roomId LIMIT 1", new
+                {
+                    RoomId = room.RoomId,
+                });
         }
         room.SendPacket(new RoomSettingsSavedComposer(room.RoomId));
         room.SendPacket(new RoomInfoUpdatedComposer(room.RoomId));

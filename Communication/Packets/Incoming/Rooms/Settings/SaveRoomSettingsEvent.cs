@@ -3,6 +3,7 @@ using Plus.Communication.Packets.Outgoing.Navigator;
 using Plus.Communication.Packets.Outgoing.Rooms.Engine;
 using Plus.Communication.Packets.Outgoing.Rooms.Settings;
 using Plus.Database;
+using Dapper;
 using Plus.HabboHotel.Achievements;
 using Plus.HabboHotel.GameClients;
 using Plus.HabboHotel.Navigator;
@@ -144,34 +145,37 @@ internal class SaveRoomSettingsEvent : IPacketEvent
                 accessStr = "invisible";
                 break;
         }
-        using (var dbClient = _database.GetQueryReactor())
+        using (var connection = _database.Connection())
         {
-            dbClient.SetQuery(
-                "UPDATE `rooms` SET `caption` = @caption, `description` = @description, `password` = @password, `category` = @categoryId, `state` = @state, `tags` = @tags, `users_max` = @maxUsers, `allow_pets` = @allowPets, `allow_pets_eat` = @allowPetsEat, `room_blocking_disabled` = @roomBlockingDisabled, `allow_hidewall` = @allowHidewall, `floorthick` = @floorThick, `wallthick` = @wallThick, `mute_settings` = @muteSettings, `kick_settings` = @kickSettings, `ban_settings` = @banSettings, `chat_mode` = @chatMode, `chat_size` = @chatSize, `chat_speed` = @chatSpeed, `chat_extra_flood` = @extraFlood, `chat_hearing_distance` = @chatDistance, `trade_settings` = @tradeSettings WHERE `id` = @roomId LIMIT 1");
-            dbClient.AddParameter("categoryId", categoryId);
-            dbClient.AddParameter("maxUsers", maxUsers);
-            dbClient.AddParameter("allowPets", allowPets);
-            dbClient.AddParameter("allowPetsEat", allowPetsEat);
-            dbClient.AddParameter("roomBlockingDisabled", roomBlockingEnabled);
-            dbClient.AddParameter("allowHidewall", room.Hidewall);
-            dbClient.AddParameter("floorThick", room.FloorThickness);
-            dbClient.AddParameter("wallThick", room.WallThickness);
-            dbClient.AddParameter("muteSettings", room.WhoCanMute);
-            dbClient.AddParameter("kickSettings", room.WhoCanKick);
-            dbClient.AddParameter("banSettings", room.WhoCanBan);
-            dbClient.AddParameter("chatMode", room.ChatMode);
-            dbClient.AddParameter("chatSize", room.ChatSize);
-            dbClient.AddParameter("chatSpeed", room.ChatSpeed);
-            dbClient.AddParameter("extraFlood", room.ExtraFlood);
-            dbClient.AddParameter("chatDistance", room.ChatDistance);
-            dbClient.AddParameter("tradeSettings", room.TradeSettings);
-            dbClient.AddParameter("roomId", room.Id);
-            dbClient.AddParameter("caption", room.Name);
-            dbClient.AddParameter("description", room.Description);
-            dbClient.AddParameter("password", room.Password);
-            dbClient.AddParameter("state", accessStr);
-            dbClient.AddParameter("tags", formattedTags.ToString());
-            dbClient.RunQuery();
+            connection.Execute(
+                "UPDATE rooms SET caption = @caption, description = @description, password = @password, category = @categoryId, state = @state, tags = @tags, users_max = @maxUsers, allow_pets = @allowPets, allow_pets_eat = @allowPetsEat, room_blocking_disabled = @roomBlockingDisabled, allow_hidewall = @allowHidewall, floorthick = @floorThick, wallthick = @wallThick, mute_settings = @muteSettings, kick_settings = @kickSettings, ban_settings = @banSettings, chat_mode = @chatMode, chat_size = @chatSize, chat_speed = @chatSpeed, chat_extra_flood = @extraFlood, chat_hearing_distance = @chatDistance, trade_settings = @tradeSettings WHERE id = @roomId LIMIT 1",
+                new { 
+                    roomId = room.Id,
+                    caption = room.Name,
+                    description = room.Description,
+                    state = accessStr,
+                    password = room.Password,
+                    categoryId = categoryId,
+                    maxUsers = maxUsers,
+                    allowPets = allowPets,
+                    allowPetsEat = allowPetsEat,
+                    roomBlockingDisabled = roomBlockingEnabled,
+                    allowHidewall = room.Hidewall,
+                    floorThick = room.FloorThickness,
+                    wallThick = room.WallThickness,
+                    muteSettings = room.WhoCanMute,
+                    kickSettings = room.WhoCanKick,
+                    banSettings = room.WhoCanBan,
+                    chatMode = room.ChatMode,
+                    chatSize = room.ChatSize,
+                    chatSpeed = room.ChatSpeed,
+                    extraFlood = room.ExtraFlood,
+                    chatDistance = room.ChatDistance,
+                    tradeSettings = room.TradeSettings,
+                    tags = formattedTags.ToString()
+
+                });
+
         }
         room.GetGameMap().GenerateMaps();
         if (session.GetHabbo().CurrentRoom == null)

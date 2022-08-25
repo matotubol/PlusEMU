@@ -49,7 +49,7 @@ internal class CheckGnomeNameEvent : IPacketEvent
         //Quickly delete it from the database.
         using (var connection = _database.Connection())
         {
-            connection.Execute("DELETE FROM `items` WHERE `id` = @ItemId LIMIT 1", new { ItemId = item.Id});
+            connection.Execute("DELETE FROM items WHERE id = @ItemId LIMIT 1", new { ItemId = item.Id});
         }
 
         //Remove the item.
@@ -72,7 +72,7 @@ internal class CheckGnomeNameEvent : IPacketEvent
         //Update the pets gnome clothing.
         using (var connection = _database.Connection())
         {
-            connection.Execute("UPDATE `bots_petdata` SET `gnome_clothing` = @GnomeClothing WHERE `id` = @PetId LIMIT 1", new { GnomeClothing = pet.GnomeClothing, PetId = pet.PetId });
+            connection.Execute("UPDATE bots_petdata SET gnome_clothing = @GnomeClothing WHERE id = @PetId LIMIT 1", new { GnomeClothing = pet.GnomeClothing, PetId = pet.PetId });
         }
 
         //Make a RoomUser of the pet.
