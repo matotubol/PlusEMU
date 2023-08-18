@@ -29,7 +29,16 @@ public class ProfileInformationComposer : IServerPacket
         packet.WriteString(_habbo.Look);
         packet.WriteString(_habbo.Motto);
         packet.WriteString(origin.ToString("dd/MM/yyyy"));
-        packet.WriteInteger(_habbo.HabboStats.AchievementPoints);
+        
+         if (_habbo.HabboStats != null)
+        {
+            packet.WriteInteger(_habbo.HabboStats.AchievementPoints);
+        }
+        else
+        {
+            packet.WriteInteger(0); // Fix up a better way
+        }
+        
         packet.WriteInteger(_friendCount); // Friend Count
         packet.WriteBoolean(_habbo.Id != _session.GetHabbo().Id && _session.GetHabbo().Messenger.FriendshipExists(_habbo.Id)); //  Is friend
         packet.WriteBoolean(_habbo.Id != _session.GetHabbo().Id && !_session.GetHabbo().Messenger.FriendshipExists(_habbo.Id) &&
@@ -43,7 +52,16 @@ public class ProfileInformationComposer : IServerPacket
             packet.WriteString(group.Badge);
             packet.WriteString(PlusEnvironment.Game.GroupManager.GetColourCode(group.Colour1, true));
             packet.WriteString(PlusEnvironment.Game.GroupManager.GetColourCode(group.Colour2, false));
-            packet.WriteBoolean(_habbo.HabboStats.FavouriteGroupId == group.Id); // todo favs
+            
+            if (_habbo.HabboStats != null)
+            {
+                packet.WriteBoolean(_habbo.HabboStats.FavouriteGroupId == group.Id); // todo favs
+            }
+            else
+            {
+                packet.WriteBoolean(false); // Comeup with a better way for this
+            }
+            
             packet.WriteInteger(0); //what the fuck
             packet.WriteBoolean(group?.ForumEnabled ?? true); //HabboTalk
         }
