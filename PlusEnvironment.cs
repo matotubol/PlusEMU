@@ -11,7 +11,7 @@ using Plus.Communication.Nitro;
 using Plus.Communication.Packets.Outgoing.Moderation;
 using Plus.Communication.RCON;
 using Plus.Core;
-using Plus.Core.FigureData;
+//using Plus.Core.FigureData;
 using Plus.Core.Language;
 using Plus.Core.Settings;
 using Plus.Database;
@@ -20,6 +20,7 @@ using Plus.HabboHotel.Achievements;
 using Plus.HabboHotel.Catalog;
 using Plus.HabboHotel.Items;
 using Plus.HabboHotel.Users;
+using Plus.HabboHotel.Users.Clothing;
 using Plus.HabboHotel.Users.UserData;
 
 namespace Plus;
@@ -117,7 +118,6 @@ public class PlusEnvironment : IPlusEnvironment
             //Get the configuration & Game set.
             await _languageManager.Reload();
             await _settingsManager.Reload();
-            _figureManager.Init();
 
             //Have our encryption ready.
             HabboEncryptionV2.Initialize(new());
@@ -163,6 +163,8 @@ public class PlusEnvironment : IPlusEnvironment
             Console.ReadKey();
             return false;
         }
+        _figureManager.Init();
+
 
         return true;
     }
@@ -327,7 +329,8 @@ public class PlusEnvironment : IPlusEnvironment
 
     public static IRconSocket RconSocket => _rcon;
 
-    public static IFigureDataManager FigureManager => _figureManager;
+   // public static IFigureDataManager FigureManager => _figureManager;
+
 
     [Obsolete("Inject IDatabase instead")]
     public static IDatabase DatabaseManager => _database;
