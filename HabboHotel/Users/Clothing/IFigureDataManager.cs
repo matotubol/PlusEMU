@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Plus.Core.FigureData.Types;
+﻿using Plus.HabboHotel.Users.Clothing.Parts;
 using Plus.HabboHotel.Users.Clothing.Types;
 
 namespace Plus.HabboHotel.Users.Clothing;
@@ -29,6 +24,6 @@ public interface IFigureDataManager
 
     bool ValidateMandatorySetTypes(string gender, bool hasHabboClub, List<string> validatedItems);
 
-    string ValidateLook(string itemString, string gender, bool hasHabboClub);
+    string ValidateLook(string itemString, string gender, ICollection<ClothingParts> clothingParts, bool hasHabboClub);
 
 }

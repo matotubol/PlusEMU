@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Plus.HabboHotel.Catalog;
+using Plus.HabboHotel.Users.Clothing.Parts;
 using Plus.HabboHotel.Users.Clothing.Types;
 using System.Text.Json;
 
@@ -85,7 +86,7 @@ internal class FigureDataManager : IFigureDataManager
         }
 
         //for testing
-        LogMessage(ValidateLook("hd-996000085-1465.ch-989989228.lg-800001582-71.ha-61685620.he-999999026.fa-1205-1324.ca-3176-1294.cc-800001382-1186.cp-800001164", "M", false));
+        //LogMessage(ValidateLook("hd-996000085-1465.ch-989989228.lg-800001582-71.ha-61685620.he-999999026.fa-1205-1324.ca-3176-1294.cc-800001382-1186.cp-800001164", "M", false));
     }
 
     private void LogMessage(string message)
@@ -231,7 +232,7 @@ internal class FigureDataManager : IFigureDataManager
     }
 
     //TODO add ICollection<ClothingParts> clothingParts
-    public string ValidateLook(string look, string gender, bool hasHabboClub)
+    public string ValidateLook(string look, string gender, ICollection<ClothingParts> clothingParts, bool hasHabboClub)
     {
 
         if (string.IsNullOrEmpty(look) ||

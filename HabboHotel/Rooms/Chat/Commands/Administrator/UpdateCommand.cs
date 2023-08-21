@@ -1,5 +1,5 @@
 ﻿using Plus.Communication.Packets.Outgoing.Catalog;
-using Plus.Core.FigureData;
+using Plus.HabboHotel.Users.Clothing;
 using Plus.Core.Settings;
 using Plus.HabboHotel.Achievements;
 using Plus.HabboHotel.Badges;

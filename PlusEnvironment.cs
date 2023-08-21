@@ -11,7 +11,7 @@ using Plus.Communication.Nitro;
 using Plus.Communication.Packets.Outgoing.Moderation;
 using Plus.Communication.RCON;
 using Plus.Core;
-using Plus.Core.FigureData;
+using Plus.HabboHotel.Users.Clothing;
 using Plus.Core.Language;
 using Plus.Core.Settings;
 using Plus.Database;
