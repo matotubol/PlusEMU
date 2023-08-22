@@ -1,93 +1,108 @@
 ﻿using Microsoft.Extensions.Logging;
+using Plus.Database;
 using Plus.HabboHotel.Catalog;
 using Plus.HabboHotel.Users.Clothing.Parts;
-using Plus.HabboHotel.Users.Clothing.Types;
-using System.Text.Json;
+using Plus.Utilities.FigureData;
+using Plus.Utilities.FigureData.Types;
+using Z.Dapper.Plus;
 
 namespace Plus.HabboHotel.Users.Clothing;
 internal class FigureDataManager : IFigureDataManager
 {
     private readonly ICatalogManager _catalogManager;
     private readonly ILogger<FigureDataManager> _logger;
-    public FigureData FigureData { get; private set; }
+    private readonly IDatabase _database;
     private Dictionary<string, SetType> _indexedSetTypes { get; set; }
     private Dictionary<int, Palette> _indexedPalettes { get; set; }
 
+
     private const bool DEBUG = true;
-    private const int MaxItemComponents = 4;// Dont change (setType-itemId-optional colorIndex1-optional colorIndex2
+    private const int MaxItemComponents = 5; //Should always be 2 + highest colorindex of parts of the item.//TODO make dynamic
     private const string Male = "M";
     private const string Female = "F";
     private const string Unisex = "U";
-
-    public FigureDataManager(ICatalogManager catalogManager, ILogger<FigureDataManager> logger)
+    public FigureDataManager(ICatalogManager catalogManager, ILogger<FigureDataManager> logger, IDatabase database)
     {
         _catalogManager = catalogManager;
         _logger = logger;
+        _database = database;
         _indexedPalettes = new();
         _indexedSetTypes = new();
     }
-
-    /* Make sure you have no duplicate ids in your SetTypes sets else we cant index them.
-     * 1. Get the current directory
-     2. Construct the path to the JSON file
-     3. Read the JSON file
-     3. Read the JSON file
-     4. Deserialize the JSON data
-     5. Index the data for faster lookups */
-    public void Init()
+    public async Task InitAsync()
     {
-        var projectSolutionPath = Directory.GetCurrentDirectory();
-        //TODO make this database configurable.
-        var jsonDataPath = Path.Combine(projectSolutionPath, "Config", "FigureData.json");
+        var figureDataUtility = new FigureDataUtility();
+        FigureData figureData = await figureDataUtility.InitFromJsonAsync();
 
-        if (!File.Exists(jsonDataPath))
-        {
-            throw new FileNotFoundException($"The file {jsonDataPath} was not found.");
-        }
-
-        using (var stream = File.OpenRead(jsonDataPath))
-        {
-            using var doc = JsonDocument.Parse(stream);
-            FigureData = JsonSerializer.Deserialize<FigureData>(doc.RootElement.GetRawText());
-        }
-
-        if (FigureData == null)
-        {
-            throw new InvalidOperationException("The deserialized FigureData is null.");
-        }
-
-        if (FigureData.SetTypes == null || !FigureData.SetTypes.Any())
-        {
-            throw new InvalidOperationException("FigureData.SetTypes is null or empty.");
-        }
-
-        foreach (var setType in FigureData.SetTypes)
-        {
-            if (!string.IsNullOrWhiteSpace(setType.Type) && setType != null)
-            {
-                _indexedSetTypes[setType.Type] = setType;
-
-                setType.IndexedSets = setType.Sets.ToDictionary(s => s.Id);
-            }
-        }
-
-        if (FigureData.Palettes == null || !FigureData.Palettes.Any())
-        {
-            throw new InvalidOperationException("FigureData.Palettes is null or empty.");
-        }
-
-        _indexedPalettes = new Dictionary<int, Palette>();
-        foreach (var palette in FigureData.Palettes)
-        {
-            if (palette != null)
-            {
-                _indexedPalettes[palette.Id] = palette;
-            }
-        }
-
-        //for testing
-        //LogMessage(ValidateLook("hd-996000085-1465.ch-989989228.lg-800001582-71.ha-61685620.he-999999026.fa-1205-1324.ca-3176-1294.cc-800001382-1186.cp-800001164", "M", false));
+        ConfigureDapperPlusMappings();
+        await IngestDataToDatabaseAsync(figureData);
     }
+
+    public void ConfigureDapperPlusMappings()
+    {
+        // Mapping for figure_palettes
+        DapperPlusManager.Entity<Color>()
+            .Table("figure_palettes")
+            .Identity(x => x.Id)
+            .Map(x => x.Index, "indexid")
+            .Map(x => x.HexCode, "hexcode");
+
+        // Mapping for figure_sets
+        DapperPlusManager.Entity<Set>()
+            .Table("figure_sets")
+            .Identity(x => x.Id)
+            .Map(x => x.Id, "id")
+            .Map(x => x.SetTypeReference, "set_type")
+            .Map(x => x.Gender, "gender")
+            .Map(x => x.Club, "club")
+            .Map(x => x.Sellable, "sellable")
+            .Map(x => x.Selectable, "selectable")
+            .Map(x => x.Colors, "colors");
+
+        // Mapping for figure_types
+         DapperPlusManager.Entity<SetType>()
+            .Table("figure_types")
+            .Map(x => x.Type, "type")
+            .Map(x => x.PaletteId, "paletteId");
+    }
+    public async Task IngestDataToDatabaseAsync(FigureData figureData)
+    {
+        using var connection = _database.Connection();
+
+        var setTypeDataList = new List<SetType>();
+        var setDataList = new List<Set>();
+        var paletteDataList = new List<Color>();
+
+        foreach (var setType in figureData.SetTypes)
+        {
+            setTypeDataList.Add(setType);
+
+            foreach (var set in setType.Sets)
+            {
+                set.SetTypeReference = setType.Type;
+                set.Colors = set.Parts.Max(part => part.ColorIndex);
+
+                setDataList.Add(set);
+            }
+        }
+
+        foreach (var palette in figureData.Palettes)
+        {
+            paletteDataList.AddRange(palette.Colors);
+        }
+        try
+        {
+            await connection.BulkActionAsync(x => x.BulkMerge(setTypeDataList));
+            await connection.BulkActionAsync(x => x.BulkMerge(setDataList));
+            await connection.BulkActionAsync(x => x.BulkMerge(paletteDataList));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"An error occurred while ingesting data to the database: {ex.Message}");
+        }
+    }
+
+    //public async Task UpdateFigureDataFromDatabase() { }
 
     private void LogMessage(string message)
     {
@@ -234,7 +249,6 @@ internal class FigureDataManager : IFigureDataManager
     //TODO add ICollection<ClothingParts> clothingParts
     public string ValidateLook(string look, string gender, ICollection<ClothingParts> clothingParts, bool hasHabboClub)
     {
-
         if (string.IsNullOrEmpty(look) ||
             (gender != Male && gender != Female))
         {

@@ -1,6 +1,6 @@
 ﻿using System.Text.Json.Serialization;
 
-namespace Plus.HabboHotel.Users.Clothing.Types;
+namespace Plus.Utilities.FigureData.Types;
 public class Palette
 {
     [JsonPropertyName("id")]

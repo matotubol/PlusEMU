@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
-namespace Plus.HabboHotel.Users.Clothing.Types;
+namespace Plus.Utilities.FigureData.Types;
 public class Color
 {
     [JsonPropertyName("id")]

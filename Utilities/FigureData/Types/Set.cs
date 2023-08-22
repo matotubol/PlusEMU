@@ -5,11 +5,16 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
-namespace Plus.HabboHotel.Users.Clothing.Types;
+namespace Plus.Utilities.FigureData.Types;
 public class Set
 {
+    [JsonIgnore]
+    public string SetTypeReference { get; set; }
+
     [JsonPropertyName("id")]
     public int Id { get; set; }
+
+    public int Colors { get; set; }
 
     [JsonPropertyName("gender")]
     public string Gender { get; set; }

@@ -1,14 +1,10 @@
 ﻿using Plus.HabboHotel.Users.Clothing.Parts;
-using Plus.HabboHotel.Users.Clothing.Types;
+using Plus.Utilities.FigureData.Types;
 
 namespace Plus.HabboHotel.Users.Clothing;
 public interface IFigureDataManager
 {
-    FigureData FigureData { get; }
-
-    // This method is responsible for initializing the FigureDataManager.
-    // It loads the data, indexes it for quick access, etc.
-    void Init();
+    Task InitAsync();
 
     // A method to validate a color index for a given paletteId and HabboClub status.
     bool ValidateColor(int colorIndex, int paletteId, bool hasHabboClub);
