@@ -137,12 +137,7 @@ public class FigureDataUtility : IFigureDataUtility
 
         if (existingSet.Hash != newHash)
         {
-            if (!AreSetsEqual(existingSet, updatedSet))
-            {
-                Console.WriteLine($"Properties are different for set with ID {updatedSet.Id} in setType {updatedSetType.Type}");
-            }
-
-            Console.WriteLine($"Updated set with ID {updatedSet.Id} in setType {updatedSetType.Type}");
+            Console.WriteLine($"Properties have changed for set with ID {updatedSet.Id} in setType {updatedSetType.Type}");
             Console.WriteLine($"Old Hash: {existingSet.Hash}");
             Console.WriteLine($"New Hash: {newHash}");
 
@@ -154,50 +149,6 @@ public class FigureDataUtility : IFigureDataUtility
             Console.WriteLine($"Hashes are the same for set with ID {updatedSet.Id} in setType {updatedSetType.Type}");
         }
     }
-
-    private bool AreSetsEqual(Set set1, Set set2)
-    {
-        if (set1.Id != set2.Id ||
-            set1.Gender != set2.Gender ||
-            set1.Club != set2.Club ||
-            set1.Colorable != set2.Colorable ||
-            set1.Selectable != set2.Selectable ||
-            set1.Preselectable != set2.Preselectable ||
-            set1.Sellable != set2.Sellable)
-        {
-            return false;
-        }
-
-        if (!ArePartsListsEqual(set1.Parts, set2.Parts))
-        {
-            return false;
-        }
-
-        return true;
-    }
-
-    private bool ArePartsListsEqual(List<Part> parts1, List<Part> parts2)
-    {
-        if (parts1.Count != parts2.Count)
-            return false;
-
-        for (int i = 0; i < parts1.Count; i++)
-        {
-            if (!ArePartsEqual(parts1[i], parts2[i]))
-                return false;
-        }
-        return true;
-    }
-
-    private bool ArePartsEqual(Part part1, Part part2)
-    {
-        return part1.Id == part2.Id &&
-               part1.Type == part2.Type &&
-               part1.Colorable == part2.Colorable &&
-               part1.Index == part2.Index &&
-               part1.ColorIndex == part2.ColorIndex;
-    }
-
 
     private string CalculateSHA256(Set set, string setType)
     {
