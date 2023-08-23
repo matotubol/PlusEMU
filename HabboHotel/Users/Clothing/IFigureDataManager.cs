@@ -5,6 +5,7 @@ namespace Plus.HabboHotel.Users.Clothing;
 public interface IFigureDataManager
 {
     Task InitAsync();
+    Task UpdateFigureData();
 
     // A method to validate a color index for a given paletteId and HabboClub status.
     bool ValidateColor(int colorIndex, int paletteId, bool hasHabboClub);

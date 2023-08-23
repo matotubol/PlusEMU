@@ -314,8 +314,8 @@ internal class UpdateCommand : IChatCommand
                     session.SendWhisper("Oops, you do not have the 'command_update_anti_mutant' permission.");
                     break;
                 }
-                 _figureDataManager.InitAsync(); //TODO use update instead later.
-                session.SendWhisper("FigureData manager successfully reloaded.");
+                    _figureDataManager.UpdateFigureData().Wait();
+                    session.SendWhisper("FigureData manager successfully reloaded.");
                 break;
             }
             case "bots":

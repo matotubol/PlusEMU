@@ -4,7 +4,7 @@ namespace Plus.Utilities.FigureData.Types;
 public class Part
 {
     [JsonPropertyName("id")]
-    public long Id { get; set; } //had to be long since there are long ids e.g 2147483648 
+    public long Id { get; set; }
 
     [JsonPropertyName("type")]
     public string Type { get; set; }

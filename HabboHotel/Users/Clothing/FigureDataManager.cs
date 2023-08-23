@@ -4,105 +4,33 @@ using Plus.HabboHotel.Catalog;
 using Plus.HabboHotel.Users.Clothing.Parts;
 using Plus.Utilities.FigureData;
 using Plus.Utilities.FigureData.Types;
-using Z.Dapper.Plus;
 
 namespace Plus.HabboHotel.Users.Clothing;
 internal class FigureDataManager : IFigureDataManager
 {
     private readonly ICatalogManager _catalogManager;
     private readonly ILogger<FigureDataManager> _logger;
-    private readonly IDatabase _database;
-    private Dictionary<string, SetType> _indexedSetTypes { get; set; }
-    private Dictionary<int, Palette> _indexedPalettes { get; set; }
-
+    private readonly IFigureDataUtility _figureDataUtility;
 
     private const bool DEBUG = true;
     private const int MaxItemComponents = 5; //Should always be 2 + highest colorindex of parts of the item.//TODO make dynamic
     private const string Male = "M";
     private const string Female = "F";
     private const string Unisex = "U";
-    public FigureDataManager(ICatalogManager catalogManager, ILogger<FigureDataManager> logger, IDatabase database)
+
+    public FigureDataManager(ICatalogManager catalogManager, ILogger<FigureDataManager> logger, IFigureDataUtility figureDataUtility)
     {
         _catalogManager = catalogManager;
         _logger = logger;
-        _database = database;
-        _indexedPalettes = new();
-        _indexedSetTypes = new();
+        _figureDataUtility = figureDataUtility;
     }
+
     public async Task InitAsync()
     {
-        var figureDataUtility = new FigureDataUtility();
-        FigureData figureData = await figureDataUtility.InitFromJsonAsync();
-
-        ConfigureDapperPlusMappings();
-        await IngestDataToDatabaseAsync(figureData);
+        FigureData figureData = await _figureDataUtility.InitFromJsonAsync();
     }
 
-    public void ConfigureDapperPlusMappings()
-    {
-        // Mapping for figure_palettes
-        DapperPlusManager.Entity<Color>()
-            .Table("figure_palettes")
-            .Identity(x => x.Id)
-            .Map(x => x.Index, "indexid")
-            .Map(x => x.HexCode, "hexcode");
-
-        // Mapping for figure_sets
-        DapperPlusManager.Entity<Set>()
-            .Table("figure_sets")
-            .Identity(x => x.Id)
-            .Map(x => x.Id, "id")
-            .Map(x => x.SetTypeReference, "set_type")
-            .Map(x => x.Gender, "gender")
-            .Map(x => x.Club, "club")
-            .Map(x => x.Sellable, "sellable")
-            .Map(x => x.Selectable, "selectable")
-            .Map(x => x.Colors, "colors");
-
-        // Mapping for figure_types
-         DapperPlusManager.Entity<SetType>()
-            .Table("figure_types")
-            .Map(x => x.Type, "type")
-            .Map(x => x.PaletteId, "paletteId");
-    }
-    public async Task IngestDataToDatabaseAsync(FigureData figureData)
-    {
-        using var connection = _database.Connection();
-
-        var setTypeDataList = new List<SetType>();
-        var setDataList = new List<Set>();
-        var paletteDataList = new List<Color>();
-
-        foreach (var setType in figureData.SetTypes)
-        {
-            setTypeDataList.Add(setType);
-
-            foreach (var set in setType.Sets)
-            {
-                set.SetTypeReference = setType.Type;
-                set.Colors = set.Parts.Max(part => part.ColorIndex);
-
-                setDataList.Add(set);
-            }
-        }
-
-        foreach (var palette in figureData.Palettes)
-        {
-            paletteDataList.AddRange(palette.Colors);
-        }
-        try
-        {
-            await connection.BulkActionAsync(x => x.BulkMerge(setTypeDataList));
-            await connection.BulkActionAsync(x => x.BulkMerge(setDataList));
-            await connection.BulkActionAsync(x => x.BulkMerge(paletteDataList));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError($"An error occurred while ingesting data to the database: {ex.Message}");
-        }
-    }
-
-    //public async Task UpdateFigureDataFromDatabase() { }
+    public async Task UpdateFigureData() => await _figureDataUtility.UpdateFromJsonAsync();
 
     private void LogMessage(string message)
     {
@@ -114,7 +42,7 @@ internal class FigureDataManager : IFigureDataManager
     public bool ValidateColor(int colorIndex, int paletteId, bool hasHabboClub)
     {
         // Check if the palette exists in the _indexedPalettes dictionary
-        if (!_indexedPalettes.TryGetValue(paletteId, out var palette))
+        if (!_figureDataUtility.IndexedPalettes.TryGetValue(paletteId, out var palette))
         {
             LogMessage($"Failed: palette not found for palette ID '{paletteId}'");
             return false;
@@ -136,17 +64,19 @@ internal class FigureDataManager : IFigureDataManager
         }
         return true;
     }
-    public List<Color> GetValidColors(Palette palette, bool hasHabboClub) => palette.Colors.Where(color => color.Club == 0 || (color.Club == 1 && hasHabboClub)).ToList();
+    public List<Color> GetValidColors(Palette palette, bool hasHabboClub)
+    => palette.Colors.Where(color => color.Club == 0 || (color.Club == 1 && hasHabboClub)).ToList();
+
 
     public string GenerateNonClubItem(string setTypeStr, string gender)
     {
-        if (!_indexedSetTypes.TryGetValue(setTypeStr, out var setType))
+        if (!_figureDataUtility.IndexedSetTypes.TryGetValue(setTypeStr, out var setType))
         {
             LogMessage($"setType not found for '{setTypeStr}'");
             return null;
         }
 
-        var validColors = GetValidColors(_indexedPalettes[setType.PaletteId], false);
+        var validColors = GetValidColors(_figureDataUtility.IndexedPalettes[setType.PaletteId], false);
         var firstValidColor = validColors.FirstOrDefault();
 
         // Since you're checking multiple conditions, a loop is still needed
@@ -172,6 +102,7 @@ internal class FigureDataManager : IFigureDataManager
         LogMessage($"Failed: setItem '{splitItem[1]}' is only for HC members");
         return GenerateNonClubItem(setType.Type, gender);
     }
+
     private string HandleGenderMismatch(SetType setType, string gender, bool hasHabboClub, long setId)
     {
         LogMessage($"gender mismatch for item ID '{setId}'");
@@ -184,7 +115,7 @@ internal class FigureDataManager : IFigureDataManager
         {
             if (!ValidateColor(int.Parse(splitItem[i]), setType.PaletteId, hasHabboClub))
             {
-                var firstValidColor = GetValidColors(_indexedPalettes[setType.PaletteId], false).FirstOrDefault();
+                var firstValidColor = GetValidColors(_figureDataUtility.IndexedPalettes[setType.PaletteId], false).FirstOrDefault();
                 splitItem[i] = firstValidColor?.Id.ToString() ?? string.Empty;
             }
         }
@@ -201,11 +132,12 @@ internal class FigureDataManager : IFigureDataManager
             return null;
         }
 
-        if (!_indexedSetTypes.TryGetValue(splitItem[0], out var setType))
+        if (!_figureDataUtility.IndexedSetTypes.TryGetValue(splitItem[0], out var setType))
         {
             LogMessage($"Failed: setType not found for '{splitItem[0]}'");
             return null;
         }
+
         var setId = int.Parse(splitItem[1]);
         setType.IndexedSets.TryGetValue(int.Parse(splitItem[1]), out var setItem);
         if (setItem == null)
@@ -227,7 +159,7 @@ internal class FigureDataManager : IFigureDataManager
     {
         var encounteredSetTypes = validatedItems.Select(item => item.Split('-')[0]).ToList();
 
-        foreach (var setType in _indexedSetTypes.Values)
+        foreach (var setType in _figureDataUtility.IndexedSetTypes.Values)
         {
             if (!IsMandatoryForGender(setType, gender, hasHabboClub) || encounteredSetTypes.Contains(setType.Type))
                 continue;
