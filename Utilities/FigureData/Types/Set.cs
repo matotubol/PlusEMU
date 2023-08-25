@@ -11,7 +11,11 @@ public class Set
     [JsonIgnore]
     public string SetTypeReference { get; set; }
 
+    [JsonIgnore]
     public string Hash { get; set; }
+
+    [JsonIgnore]
+    public int Colors { get; set; }
 
     [JsonPropertyName("id")]
     public int Id { get; set; }

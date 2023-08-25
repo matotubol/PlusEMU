@@ -28,7 +28,7 @@ internal class UpdateFigureDataEvent : IPacketEvent
     {
         var gender = packet.ReadString().ToUpper();
         //TODO get habboclub status
-        var look = _figureManager.ValidateLook(packet.ReadString(), gender, session.GetHabbo().Clothing.GetClothingParts, true);
+        var look = _figureManager.ValidateLookAsync(packet.ReadString(), gender, session.GetHabbo().Clothing.GetClothingParts, true).Result;
         if (look == session.GetHabbo().Look)
             return Task.CompletedTask;
         if ((DateTime.Now - session.GetHabbo().LastClothingUpdateTime).TotalSeconds <= 2.0)

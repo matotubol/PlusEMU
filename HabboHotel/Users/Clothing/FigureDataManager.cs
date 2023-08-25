@@ -1,9 +1,12 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using Dapper;
+using Microsoft.Extensions.Logging;
 using Plus.Database;
 using Plus.HabboHotel.Catalog;
 using Plus.HabboHotel.Users.Clothing.Parts;
 using Plus.Utilities.FigureData;
 using Plus.Utilities.FigureData.Types;
+using System.Data;
+using Z.Dapper.Plus;
 
 namespace Plus.HabboHotel.Users.Clothing;
 internal class FigureDataManager : IFigureDataManager
@@ -11,6 +14,7 @@ internal class FigureDataManager : IFigureDataManager
     private readonly ICatalogManager _catalogManager;
     private readonly ILogger<FigureDataManager> _logger;
     private readonly IFigureDataUtility _figureDataUtility;
+    private readonly IDatabase _database;
 
     private const bool DEBUG = true;
     private const int MaxItemComponents = 5; //Should always be 2 + highest colorindex of parts of the item.//TODO make dynamic
@@ -18,16 +22,19 @@ internal class FigureDataManager : IFigureDataManager
     private const string Female = "F";
     private const string Unisex = "U";
 
-    public FigureDataManager(ICatalogManager catalogManager, ILogger<FigureDataManager> logger, IFigureDataUtility figureDataUtility)
+    public FigureDataManager(ICatalogManager catalogManager, ILogger<FigureDataManager> logger, IFigureDataUtility figureDataUtility, IDatabase database)
     {
         _catalogManager = catalogManager;
         _logger = logger;
         _figureDataUtility = figureDataUtility;
+        _database = database;
     }
 
     public async Task InitAsync()
     {
         FigureData figureData = await _figureDataUtility.InitFromJsonAsync();
+        ConfigureDapperPlusMappings();
+        await IngestDataToDatabaseAsync(figureData);
     }
 
     public async Task UpdateFigureData() => await _figureDataUtility.UpdateFromJsonAsync();
@@ -39,158 +46,301 @@ internal class FigureDataManager : IFigureDataManager
             Console.WriteLine(message);
         }
     }
-    public bool ValidateColor(int colorIndex, int paletteId, bool hasHabboClub)
+    public void ConfigureDapperPlusMappings()
     {
-        // Check if the palette exists in the _indexedPalettes dictionary
-        if (!_figureDataUtility.IndexedPalettes.TryGetValue(paletteId, out var palette))
+        DapperPlusManager.Entity<Palette>()
+        .Table("figure_palettes")  // Assuming this is the table name for Palette
+        .Identity(x => x.Id)
+        .AfterAction((kind, x) => {
+            if (kind == DapperPlusActionKind.Insert || kind == DapperPlusActionKind.Merge)
+            {
+                x.Colors.ForEach(y => y.PaletteId = x.Id);
+            }
+        });
+
+        // Mapping for figure_palettes
+        DapperPlusManager.Entity<Color>()
+            .Table("figure_palettes")
+            .Identity(x => x.Id)
+            .Map(x => x.Id, "color_id")
+            .Map(x => x.PaletteId, "palette_id")
+            .Map(x => x.Club);
+
+        // Mapping for figure_sets
+        DapperPlusManager.Entity<Set>()
+            .Table("figure_sets")
+            .Identity(x => x.Id)
+            .Map(x => x.Id, "id")
+            .Map(x => x.SetTypeReference, "set_type")
+            .Map(x => x.Gender, "gender")
+            .Map(x => x.Club, "club")
+            .Map(x => x.Sellable, "sellable")
+            .Map(x => x.Selectable, "selectable")
+            .Map(x => x.Colors, "colors");
+
+        // Mapping for figure_types
+        DapperPlusManager.Entity<SetType>()
+           .Table("figure_types")
+           .Map(x => x.Type, "type")
+           .Map(x => x.PaletteId, "paletteId");
+    }
+
+    public async Task IngestDataToDatabaseAsync(FigureData figureData)
+    {
+        using var connection = _database.Connection();
+
+        var setTypeDataList = new List<SetType>();
+        var setDataList = new List<Set>();
+        var paletteDataList = new List<Color>();
+
+        foreach (var setType in figureData.SetTypes)
+        {
+            setTypeDataList.Add(setType);
+
+            foreach (var set in setType.Sets)
+            {
+                set.SetTypeReference = setType.Type;
+                set.Colors = set.Parts.Max(part => part.ColorIndex);
+                setDataList.Add(set);
+            }
+        }
+
+        foreach (var palette in figureData.Palettes)
+        {
+            paletteDataList.AddRange(palette.Colors);
+
+            foreach(var palettes in palette.Colors)
+            {
+                palettes.PaletteId = palette.Id;
+                paletteDataList.Add(palettes);
+            }
+        }
+        try
+        {
+            await connection.BulkActionAsync(x => x.BulkMerge(setTypeDataList));
+            await connection.BulkActionAsync(x => x.BulkMerge(setDataList));
+            await connection.BulkActionAsync(x => x.BulkMerge(paletteDataList));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"An error occurred while ingesting data to the database: {ex.Message}");
+        }
+    }
+
+    public async Task<bool> ValidateColorAsync(int colorIndex, int paletteId, bool hasHabboClub, IDbConnection connection)
+    {
+        int paletteCount = await connection.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM figure_palettes WHERE palette_id = @PaletteId",
+            new { PaletteId = paletteId });
+
+        if (paletteCount == 0)
         {
             LogMessage($"Failed: palette not found for palette ID '{paletteId}'");
             return false;
         }
 
-        // Check if the color exists within the palette
-        var color = palette.Colors.FirstOrDefault(c => c.Id == colorIndex);
-        if (color == null)
+        int colorCount = await connection.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM figure_palettes WHERE id = @ColorIndex AND palette_id = @PaletteId",
+            new { ColorIndex = colorIndex, PaletteId = paletteId });
+
+        if (colorCount == 0)
         {
             LogMessage($"Failed: color index '{colorIndex}' not found in palette ID '{paletteId}'");
             return false;
         }
 
-        // If the color requires a Habbo Club membership, check if the user has it
-        if (color.Club > 0 && !hasHabboClub)
+        int clubRequirement = await connection.ExecuteScalarAsync<int>(
+            "SELECT club FROM figure_palettes WHERE id = @ColorIndex AND palette_id = @PaletteId",
+            new { ColorIndex = colorIndex, PaletteId = paletteId });
+
+        if (clubRequirement > 0 && !hasHabboClub)
         {
             LogMessage($"Failed: color index '{colorIndex}' requires Habbo Club membership");
             return false;
         }
+
         return true;
     }
-    public List<Color> GetValidColors(Palette palette, bool hasHabboClub)
-    => palette.Colors.Where(color => color.Club == 0 || (color.Club == 1 && hasHabboClub)).ToList();
 
-
-    public string GenerateNonClubItem(string setTypeStr, string gender)
+    private async Task<bool> IsMandatoryForGenderAsync(string setType, string gender, bool hasHabboClub,
+        IDbConnection connection)
     {
-        if (!_figureDataUtility.IndexedSetTypes.TryGetValue(setTypeStr, out var setType))
+        var query = @"SELECT `mandatory_m_0`, `mandatory_m_1`, `mandatory_f_0`, `mandatory_f_1`
+                  FROM `figure_types`
+                  WHERE `type` = @Type";
+
+        var setTypeData = await connection.QueryFirstOrDefaultAsync(query, new { Type = setType });
+
+        if (setTypeData == null)
         {
-            LogMessage($"setType not found for '{setTypeStr}'");
-            return null;
+            // setType not found in the database
+            return false;
         }
 
-        var validColors = GetValidColors(_figureDataUtility.IndexedPalettes[setType.PaletteId], false);
-        var firstValidColor = validColors.FirstOrDefault();
-
-        // Since you're checking multiple conditions, a loop is still needed
-        foreach (var set in setType.IndexedSets.Values) // Use IndexedSets.Values to iterate through the Set objects
+        return gender switch
         {
-            if ((set.Gender == Unisex || set.Gender == gender) && set.Club == 0)
-            {
-                return $"{setTypeStr}-{set.Id}-{firstValidColor?.Id}"; // Safe navigation in case firstValidColor is null
-            }
+            Male => hasHabboClub ? setTypeData.mandatory_m_1 : setTypeData.mandatory_m_0,
+            Female => hasHabboClub ? setTypeData.mandatory_f_1 : setTypeData.mandatory_f_0,
+            _ => false
+        };
+    }
+    /*Generates an non HC item if its type is not Mendatory else removes it.*/
+    private async Task<string?> HandleGenderMismatchAsync(string setType, string gender, bool hasHabboClub, IDbConnection connection)
+    {
+        LogMessage($"gender mismatch for item ");
+        
+        if (await IsMandatoryForGenderAsync(setType, gender, hasHabboClub, connection))
+        {
+            return await GenerateNonClubItemAsync(setType, gender, connection);
         }
         return null;
     }
-
-    private bool IsMandatoryForGender(SetType setType, string gender, bool hasHabboClub) => gender switch
+    private async Task<string?> HandleColorableSetTypeAsync(Set setItem, bool hasHabboClub, string[] splitItem, IDbConnection connection)
     {
-        Male => hasHabboClub ? setType.MandatoryM1 : setType.MandatoryM0,
-        Female => hasHabboClub ? setType.MandatoryF1 : setType.MandatoryF0,
-        _ => false
-    };
+        var itemType = splitItem[0];
+        var setId = splitItem[1];
 
-    private string HandleNonClubMembers(SetType setType, string gender, string[] splitItem)
-    {
-        LogMessage($"Failed: setItem '{splitItem[1]}' is only for HC members");
-        return GenerateNonClubItem(setType.Type, gender);
-    }
+        var paletteId = await connection.QueryFirstOrDefaultAsync<int>(
+            "SELECT paletteId FROM figure_types WHERE type = @Type",
+            new { Type = itemType }
+        );
 
-    private string HandleGenderMismatch(SetType setType, string gender, bool hasHabboClub, long setId)
-    {
-        LogMessage($"gender mismatch for item ID '{setId}'");
-        return IsMandatoryForGender(setType, gender, hasHabboClub) ? GenerateNonClubItem(setType.Type, gender) : null;
-    }
-
-    private string HandleColorableSetType(SetType setType, string[] splitItem, bool hasHabboClub)
-    {
+        // Loop through the colors and validate each one
         for (var i = 2; i < splitItem.Length; i++)
         {
-            if (!ValidateColor(int.Parse(splitItem[i]), setType.PaletteId, hasHabboClub))
+            // Check if the color is empty
+            if (string.IsNullOrEmpty(splitItem[i]))
             {
-                var firstValidColor = GetValidColors(_figureDataUtility.IndexedPalettes[setType.PaletteId], false).FirstOrDefault();
-                splitItem[i] = firstValidColor?.Id.ToString() ?? string.Empty;
+                // If empty replace with the first valid color
+                var firstValidColorId = await GetFirstValidColorAsync(paletteId, connection);
+                splitItem[i] = firstValidColorId?.ToString() ?? "0";
+                continue;
+            }
+
+            var colorId = int.Parse(splitItem[i]);
+            bool colorIsValid = await ValidateColorAsync(colorId, paletteId, hasHabboClub, connection);
+
+            if (!colorIsValid)
+            {
+                var firstValidColorId = await GetFirstValidColorAsync(paletteId, connection);
+                splitItem[i] = firstValidColorId?.ToString() ?? "0";
             }
         }
+
         return string.Join("-", splitItem);
     }
 
-    public string ValidateSingleItem(string item, string gender, bool hasHabboClub)
+
+    private async Task<int?> GetFirstValidColorAsync(int paletteId, IDbConnection connection)
+    {
+        string query = @"SELECT color_id
+                     FROM figure_palettes
+                     WHERE palette_id = @PaletteId
+                     ORDER BY id ASC
+                     LIMIT 1";
+
+        var firstValidColorId = await connection.QueryFirstOrDefaultAsync<int?>(query, new { PaletteId = paletteId });
+
+        if (firstValidColorId == null)
+        {
+            LogMessage($"Failed: No valid color found for paletteId '{paletteId}'");
+        }
+        else
+        {
+            LogMessage($"Success: First valid color for paletteId '{paletteId}' is '{firstValidColorId}'");
+        }
+
+        return firstValidColorId;
+    }
+
+
+    public async Task<string?> GenerateNonClubItemAsync(string setTypeStr, string gender, IDbConnection connection)
+    {
+        var firstValidSet = await connection.QueryFirstOrDefaultAsync<Set>(
+            @"SELECT id 
+          FROM figure_sets 
+          WHERE type = @Type AND (gender = @Gender OR gender = 'U') AND club = 0
+          LIMIT 1",
+            new { Type = setTypeStr, Gender = gender }
+        );
+
+        var paletteId = await connection.QueryFirstOrDefaultAsync(
+            @"SELECT paletteId 
+          FROM figure_types 
+          WHERE type = @Type
+          LIMIT 1",
+            new { Type = setTypeStr }
+        );
+
+        if (firstValidSet == null)
+        {
+            LogMessage($"Failed: No valid set found for type '{setTypeStr}' and gender '{gender}'");
+            return null;
+        }
+
+        int? firstValidColorId = await GetFirstValidColorAsync(paletteId, connection);
+
+        return $"{setTypeStr}-{firstValidSet.Id}-{firstValidColorId}";
+    }
+
+    private async Task<string?> ValidateSingleItemAsync(string item, string gender, bool hasHabboClub, IDbConnection connection)
     {
         var splitItem = item.Split('-');
+        var itemType = splitItem[0];
 
         if (splitItem.Length > MaxItemComponents)
         {
             LogMessage($"Failed: Too many colors specified for item '{item}'");
             return null;
-        }
+        } 
 
-        if (!_figureDataUtility.IndexedSetTypes.TryGetValue(splitItem[0], out var setType))
-        {
-            LogMessage($"Failed: setType not found for '{splitItem[0]}'");
-            return null;
-        }
+        // Check if setItem exists and its attributes
+        var setItem = await connection.QueryFirstOrDefaultAsync<Set>(
+            @"SELECT id, gender, club, colorable 
+          FROM figure_sets 
+          WHERE id = @Id AND set_type = @Type",
+            new { Id = int.Parse(splitItem[1]), Type = splitItem[0] }
+        );
 
-        var setId = int.Parse(splitItem[1]);
-        setType.IndexedSets.TryGetValue(int.Parse(splitItem[1]), out var setItem);
         if (setItem == null)
         {
             LogMessage($"Failed: setItem not found for ID '{splitItem[1]}'");
             return null;
         }
 
-        if (!hasHabboClub && setItem.Club > 0)
-            return HandleNonClubMembers(setType, gender, splitItem);
+        if (!hasHabboClub && setItem.Club == 1)
+        {
+            return await GenerateNonClubItemAsync(splitItem[0], gender, connection);
+        }
 
         if (setItem.Gender != Unisex && setItem.Gender != gender)
-            return HandleGenderMismatch(setType, gender, hasHabboClub, setId);
-
-        return setItem.Colorable ? HandleColorableSetType(setType, splitItem, hasHabboClub) : $"{setType.Type}-{setItem.Id}";
-    }
-
-    public bool ValidateMandatorySetTypes(string gender, bool hasHabboClub, List<string> validatedItems)
-    {
-        var encounteredSetTypes = validatedItems.Select(item => item.Split('-')[0]).ToList();
-
-        foreach (var setType in _figureDataUtility.IndexedSetTypes.Values)
         {
-            if (!IsMandatoryForGender(setType, gender, hasHabboClub) || encounteredSetTypes.Contains(setType.Type))
-                continue;
-
-            var defaultItem = GenerateNonClubItem(setType.Type, gender);
-
-            if (defaultItem == null)
-            {
-                // Could not generate a default item for the mandatory setType.
-                return false;
-            }
-
-            LogMessage($"Failed: missing mandatory setType. added '{defaultItem}'");
-            validatedItems.Add(defaultItem);
+            return await HandleGenderMismatchAsync(itemType, gender, hasHabboClub, connection);
         }
-        return true;
+
+        if (!setItem.Colorable)
+        {
+            return $"{splitItem[0]}-{setItem.Id}";
+        }
+        
+        return await HandleColorableSetTypeAsync(setItem, hasHabboClub, splitItem, connection);
     }
+
 
     //TODO add ICollection<ClothingParts> clothingParts
-    public string ValidateLook(string look, string gender, ICollection<ClothingParts> clothingParts, bool hasHabboClub)
+    public async Task<string> ValidateLookAsync(string look, string gender, ICollection<ClothingParts> clothingParts, bool hasHabboClub)
     {
+        using var connection = _database.Connection();
+
         if (string.IsNullOrEmpty(look) ||
             (gender != Male && gender != Female))
         {
             // return GenerateDefaultLook(); //TODO
         }
 
-        LogMessage(look);
 
         var items = look.Split('.');
-        var validatedItems = new List<string>();
+        var validatedItems = new List<string?>();
         var encounteredSetTypes = new HashSet<string>();
 
         foreach (var item in items)
@@ -206,18 +356,20 @@ internal class FigureDataManager : IFigureDataManager
             }
             encounteredSetTypes.Add(setTypeStr);
 
-            var validatedItem = ValidateSingleItem(item, gender, hasHabboClub);
+            var validatedItem = await ValidateSingleItemAsync(item, gender, hasHabboClub, connection);
             if (!string.IsNullOrEmpty(validatedItem))
             {
                 validatedItems.Add(validatedItem);
             }
+            LogMessage(validatedItem);
+
         }
 
         //TODO if fails we should just return default look since looks are required to have mandatory items.
-        if (!ValidateMandatorySetTypes(gender, hasHabboClub, validatedItems))
+        /*if (!ValidateMandatorySetTypes(gender, hasHabboClub, validatedItems))
         {
             return string.Empty;
-        }
+        }*/
 
         return string.Join(".", validatedItems);
     }
