@@ -21,6 +21,9 @@ internal class FigureDataManager : IFigureDataManager
     private const string Male = "M";
     private const string Female = "F";
     private const string Unisex = "U";
+    private readonly string[] mandatorySetTypes = { "ch", "hd", "lg" };
+    private readonly string[] setTypes = { "ca", "cc", "ch", "cp", "ea", "fa", "ha", "hd", "he", "hr", "lg", "sh", "wa" };
+
 
     public FigureDataManager(ICatalogManager catalogManager, ILogger<FigureDataManager> logger, IFigureDataUtility figureDataUtility, IDatabase database)
     {
@@ -61,7 +64,7 @@ internal class FigureDataManager : IFigureDataManager
         // Mapping for figure_palettes
         DapperPlusManager.Entity<Color>()
             .Table("figure_palettes")
-            .Identity(x => x.Id)
+            .Identity(x => x.primaryId, "id")
             .Map(x => x.Id, "color_id")
             .Map(x => x.PaletteId, "palette_id")
             .Map(x => x.Club);
@@ -85,7 +88,7 @@ internal class FigureDataManager : IFigureDataManager
            .Map(x => x.PaletteId, "paletteId");
     }
 
-    public async Task IngestDataToDatabaseAsync(FigureData figureData)
+    private async Task IngestDataToDatabaseAsync(FigureData figureData)
     {
         using var connection = _database.Connection();
 
@@ -127,33 +130,34 @@ internal class FigureDataManager : IFigureDataManager
         }
     }
 
-    public async Task<bool> ValidateColorAsync(int colorIndex, int paletteId, bool hasHabboClub, IDbConnection connection)
+    private async Task<bool> ValidateColorAsync(long colorIndex, int paletteId, bool hasHabboClub, IDbConnection connection)
     {
-        int paletteCount = await connection.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM figure_palettes WHERE palette_id = @PaletteId",
-            new { PaletteId = paletteId });
+        const string sql = @"
+        SELECT 
+            COUNT(*) AS PaletteCount, 
+            SUM(CASE WHEN color_id = @ColorIndex THEN 1 ELSE 0 END) AS ColorCount,
+            MAX(CASE WHEN color_id = @ColorIndex THEN club ELSE 0 END) AS ClubRequirement
+        FROM figure_palettes
+        WHERE palette_id = @PaletteId
+    ";
 
-        if (paletteCount == 0)
+        var parameters = new { ColorIndex = colorIndex, PaletteId = paletteId };
+
+        var result = await connection.QueryFirstOrDefaultAsync<(int PaletteCount, int ColorCount, int ClubRequirement)>(sql, parameters);
+
+        if (result.PaletteCount == 0)
         {
             LogMessage($"Failed: palette not found for palette ID '{paletteId}'");
             return false;
         }
 
-        int colorCount = await connection.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM figure_palettes WHERE id = @ColorIndex AND palette_id = @PaletteId",
-            new { ColorIndex = colorIndex, PaletteId = paletteId });
-
-        if (colorCount == 0)
+        if (result.ColorCount == 0)
         {
             LogMessage($"Failed: color index '{colorIndex}' not found in palette ID '{paletteId}'");
             return false;
         }
 
-        int clubRequirement = await connection.ExecuteScalarAsync<int>(
-            "SELECT club FROM figure_palettes WHERE id = @ColorIndex AND palette_id = @PaletteId",
-            new { ColorIndex = colorIndex, PaletteId = paletteId });
-
-        if (clubRequirement > 0 && !hasHabboClub)
+        if (result.ClubRequirement > 0 && !hasHabboClub)
         {
             LogMessage($"Failed: color index '{colorIndex}' requires Habbo Club membership");
             return false;
@@ -161,8 +165,8 @@ internal class FigureDataManager : IFigureDataManager
 
         return true;
     }
-
-    private async Task<bool> IsMandatoryForGenderAsync(string setType, string gender, bool hasHabboClub,
+    // For now i added them to [] string mandatorySetTypes as its just 3 items and not worth the query
+/*    private async Task<bool> IsMandatoryForGenderAsync(string setType, string gender, bool hasHabboClub,
         IDbConnection connection)
     {
         var query = @"SELECT `mandatory_m_0`, `mandatory_m_1`, `mandatory_f_0`, `mandatory_f_1`
@@ -183,59 +187,37 @@ internal class FigureDataManager : IFigureDataManager
             Female => hasHabboClub ? setTypeData.mandatory_f_1 : setTypeData.mandatory_f_0,
             _ => false
         };
-    }
-    /*Generates an non HC item if its type is not Mendatory else removes it.*/
-    private async Task<string?> HandleGenderMismatchAsync(string setType, string gender, bool hasHabboClub, IDbConnection connection)
-    {
-        LogMessage($"gender mismatch for item ");
-        
-        if (await IsMandatoryForGenderAsync(setType, gender, hasHabboClub, connection))
-        {
-            return await GenerateNonClubItemAsync(setType, gender, connection);
-        }
-        return null;
-    }
-    private async Task<string?> HandleColorableSetTypeAsync(Set setItem, bool hasHabboClub, string[] splitItem, IDbConnection connection)
+    }*/
+
+    private async Task<string?> HandleColorableSetTypeAsync(bool hasHabboClub, string[] splitItem, IDbConnection connection)
     {
         var itemType = splitItem[0];
         var setId = splitItem[1];
 
-        var paletteId = await connection.QueryFirstOrDefaultAsync<int>(
-            "SELECT paletteId FROM figure_types WHERE type = @Type",
-            new { Type = itemType }
-        );
+        var paletteId = await GetPaletteIdForTypeAsync(itemType, connection);
 
         // Loop through the colors and validate each one
         for (var i = 2; i < splitItem.Length; i++)
         {
-            // Check if the color is empty
-            if (string.IsNullOrEmpty(splitItem[i]))
-            {
-                // If empty replace with the first valid color
-                var firstValidColorId = await GetFirstValidColorAsync(paletteId, connection);
-                splitItem[i] = firstValidColorId?.ToString() ?? "0";
-                continue;
-            }
-
+            LogMessage(splitItem[i]+" kleur");
             var colorId = int.Parse(splitItem[i]);
             bool colorIsValid = await ValidateColorAsync(colorId, paletteId, hasHabboClub, connection);
 
             if (!colorIsValid)
             {
                 var firstValidColorId = await GetFirstValidColorAsync(paletteId, connection);
-                splitItem[i] = firstValidColorId?.ToString() ?? "0";
+                splitItem[i] = firstValidColorId.ToString() ?? "";
             }
         }
 
         return string.Join("-", splitItem);
     }
-
-
     private async Task<int?> GetFirstValidColorAsync(int paletteId, IDbConnection connection)
     {
         string query = @"SELECT color_id
                      FROM figure_palettes
                      WHERE palette_id = @PaletteId
+                     AND club = 0
                      ORDER BY id ASC
                      LIMIT 1";
 
@@ -252,125 +234,154 @@ internal class FigureDataManager : IFigureDataManager
 
         return firstValidColorId;
     }
-
-
-    public async Task<string?> GenerateNonClubItemAsync(string setTypeStr, string gender, IDbConnection connection)
-    {
-        var firstValidSet = await connection.QueryFirstOrDefaultAsync<Set>(
-            @"SELECT id 
-          FROM figure_sets 
-          WHERE type = @Type AND (gender = @Gender OR gender = 'U') AND club = 0
-          LIMIT 1",
-            new { Type = setTypeStr, Gender = gender }
-        );
-
-        var paletteId = await connection.QueryFirstOrDefaultAsync(
-            @"SELECT paletteId 
-          FROM figure_types 
-          WHERE type = @Type
-          LIMIT 1",
-            new { Type = setTypeStr }
-        );
-
-        if (firstValidSet == null)
-        {
-            LogMessage($"Failed: No valid set found for type '{setTypeStr}' and gender '{gender}'");
-            return null;
-        }
-
-        int? firstValidColorId = await GetFirstValidColorAsync(paletteId, connection);
-
-        return $"{setTypeStr}-{firstValidSet.Id}-{firstValidColorId}";
-    }
-
-    private async Task<string?> ValidateSingleItemAsync(string item, string gender, bool hasHabboClub, IDbConnection connection)
+    private async Task<string> ValidateSingleItemAsync(string item, string gender, bool hasHabboClub, IDbConnection connection)
     {
         var splitItem = item.Split('-');
         var itemType = splitItem[0];
 
         if (splitItem.Length > MaxItemComponents)
         {
-            LogMessage($"Failed: Too many colors specified for item '{item}'");
-            return null;
-        } 
-
-        // Check if setItem exists and its attributes
-        var setItem = await connection.QueryFirstOrDefaultAsync<Set>(
-            @"SELECT id, gender, club, colorable 
-          FROM figure_sets 
-          WHERE id = @Id AND set_type = @Type",
-            new { Id = int.Parse(splitItem[1]), Type = splitItem[0] }
-        );
-
-        if (setItem == null)
-        {
-            LogMessage($"Failed: setItem not found for ID '{splitItem[1]}'");
-            return null;
+            LogMessage($"Warning: Too many colors specified for item '{item}'. Truncating to {MaxItemComponents} components.");
+            splitItem = splitItem.Take(MaxItemComponents).ToArray();
+            item = string.Join("-", splitItem);
         }
 
-        if (!hasHabboClub && setItem.Club == 1)
-        {
-            return await GenerateNonClubItemAsync(splitItem[0], gender, connection);
-        }
+        const string sql = @"SELECT id, gender, club, colorable 
+                          FROM figure_sets 
+                          WHERE id = @Id AND set_type = @Type";
+        var parameters = new { Id = int.Parse(splitItem[1]), Type = itemType };
 
-        if (setItem.Gender != Unisex && setItem.Gender != gender)
-        {
-            return await HandleGenderMismatchAsync(itemType, gender, hasHabboClub, connection);
-        }
+        var setItem = await connection.QueryFirstOrDefaultAsync(sql, parameters);
 
-        if (!setItem.Colorable)
+        if (setItem is null || (!hasHabboClub && setItem.club == 1) || (setItem.gender != Unisex && setItem.gender != gender))
         {
-            return $"{splitItem[0]}-{setItem.Id}";
+            return await GenerateSetByTypeAsync(itemType, connection);
         }
         
-        return await HandleColorableSetTypeAsync(setItem, hasHabboClub, splitItem, connection);
+        return setItem.colorable 
+            ? await HandleColorableSetTypeAsync(hasHabboClub, splitItem, connection) 
+            : $"{itemType}-{setItem.Id}";
+    }
+    private async Task<int> GetPaletteIdForTypeAsync(string setType, IDbConnection connection)
+    {
+        const string query = @"
+        SELECT paletteId 
+        FROM figure_types
+        WHERE type = @SetType
+        LIMIT 1";
+
+        var parameters = new { SetType = setType };
+
+        var paletteId = await connection.QueryFirstOrDefaultAsync<int>(query, parameters);
+
+        return paletteId;
     }
 
+    private async Task<string> GenerateSetByTypeAsync(string setType, IDbConnection connection)
+    {
+        const string query = @"
+        SELECT id 
+        FROM figure_sets
+        WHERE set_type = @SetType AND
+              gender = @Gender AND
+              club = 0 AND
+              colorable = 1 AND
+              colors = 1
+        LIMIT 1";
 
+        var parameters = new
+        {
+            SetType = setType,
+            Gender = Unisex
+        };
+
+        var setId = await connection.QueryFirstOrDefaultAsync<int>(query, parameters);
+        var palette = await GetPaletteIdForTypeAsync(setType, connection);
+        var color = await GetFirstValidColorAsync(palette, connection);
+
+        return $"{setType}-{setId}-{color}";
+    }
+    
     //TODO add ICollection<ClothingParts> clothingParts
     public async Task<string> ValidateLookAsync(string look, string gender, ICollection<ClothingParts> clothingParts, bool hasHabboClub)
     {
+        LogMessage(look);
+        var items = look.Split('.');
+        var validatedItems = new List<string>();
+        var existingSetTypes = new HashSet<string>();
+
         using var connection = _database.Connection();
 
         if (string.IsNullOrEmpty(look) ||
             (gender != Male && gender != Female))
         {
-            // return GenerateDefaultLook(); //TODO
+            // return GenerateDefaultLook(); TODO
+            return "hd-180-1.lg-999999906-79";
         }
-
-
-        var items = look.Split('.');
-        var validatedItems = new List<string?>();
-        var encounteredSetTypes = new HashSet<string>();
 
         foreach (var item in items)
         {
-            var splitItems = item.Split('-');
-            var setTypeStr = splitItems[0];
+            var parts = item.Split('-');
+            var setType = parts[0];
+            var isValidItem = true;  // flag to indicate if the entire item is valid
 
-            if (encounteredSetTypes.Contains(setTypeStr))
+            if (!setTypes.Contains(setType))
             {
-                // Skip duplicate setType
-                LogMessage($"Failed: setType '{setTypeStr}' was duplicate and was removed.");
-                continue;
+                LogMessage($"Failed: setType '{setType}' was invalid and removed.");
+                isValidItem = false;
             }
-            encounteredSetTypes.Add(setTypeStr);
-
-            var validatedItem = await ValidateSingleItemAsync(item, gender, hasHabboClub, connection);
-            if (!string.IsNullOrEmpty(validatedItem))
+    
+            if (existingSetTypes.Contains(setType))
             {
-                validatedItems.Add(validatedItem);
+                LogMessage($"Failed: Duplicate setType '{setType}' was removed.");
+                isValidItem = false;
             }
-            LogMessage(validatedItem);
+    
+            if (isValidItem)
+            {
+                existingSetTypes.Add(setType);
 
+                // Check that the parts after the setType are positive integers
+                for (var i = 1; i < parts.Length; i++)
+                {
+                    if (!int.TryParse(parts[i], out var value) || value <= 0)
+                    {
+                        LogMessage($"Failed: Invalid integer '{parts[i]}' in item '{item}'.");
+                        isValidItem = false;
+                        break;
+                    }
+                }
+
+                // If all checks pass, proceed to ValidateSingleItemAsync
+                if (isValidItem)
+                {
+                    var validatedItem = await ValidateSingleItemAsync(item, gender, hasHabboClub, connection);
+                    if (string.IsNullOrEmpty(validatedItem))
+                    {
+                        var split = item.Split('-');
+                        var type = split[0];
+
+                        validatedItems.Add(await GenerateSetByTypeAsync(type, connection));
+                    }
+                    validatedItems.Add(validatedItem);
+                }
+            }
         }
+        var finalItems = new HashSet<string>(
+            validatedItems.Select(item => item.Split('-')[0])
+        );
 
-        //TODO if fails we should just return default look since looks are required to have mandatory items.
-        /*if (!ValidateMandatorySetTypes(gender, hasHabboClub, validatedItems))
-        {
-            return string.Empty;
-        }*/
+        /*After the validation we now check if the look contains all the Mandatory types 
+        and if not we create one.
+        We dont need to call validateSingleItem anymore as we make sure to create valid ones.*/
 
+         foreach (var setType in mandatorySetTypes)
+         {
+             if (!finalItems.Contains(setType))
+             {
+                validatedItems.Add(await GenerateSetByTypeAsync(setType, connection));
+             }
+        }
         return string.Join(".", validatedItems);
     }
 

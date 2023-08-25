@@ -8,7 +8,11 @@ using System.Threading.Tasks;
 namespace Plus.Utilities.FigureData.Types;
 public class Color
 {
+    [JsonIgnore]
     public int PaletteId { get; set; }  // Add this property
+    
+    [JsonIgnore]
+    public int primaryId { get; set; }
 
     [JsonPropertyName("id")]
     public int Id { get; set; }

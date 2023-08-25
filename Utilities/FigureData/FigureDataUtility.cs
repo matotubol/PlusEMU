@@ -61,7 +61,6 @@ public class FigureDataUtility : IFigureDataUtility
 
                 foreach (var set in setType.Sets)
                 {
-                    set.Hash = CalculateSHA256(set, setType.Type); //set the hash during init
                     setType.IndexedSets = setType.Sets.ToDictionary(s => s.Id);
                 }
 
