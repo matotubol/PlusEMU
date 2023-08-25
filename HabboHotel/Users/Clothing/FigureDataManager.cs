@@ -78,7 +78,7 @@ internal class FigureDataManager : IFigureDataManager
             .Map(x => x.Gender, "gender")
             .Map(x => x.Club, "club")
             .Map(x => x.Sellable, "sellable")
-            .Map(x => x.Selectable, "selectable")
+            .Map(x => x.Colorable, "colorable")
             .Map(x => x.Colors, "colors");
 
         // Mapping for figure_types
@@ -165,52 +165,34 @@ internal class FigureDataManager : IFigureDataManager
 
         return true;
     }
-    // For now i added them to [] string mandatorySetTypes as its just 3 items and not worth the query
-/*    private async Task<bool> IsMandatoryForGenderAsync(string setType, string gender, bool hasHabboClub,
-        IDbConnection connection)
-    {
-        var query = @"SELECT `mandatory_m_0`, `mandatory_m_1`, `mandatory_f_0`, `mandatory_f_1`
-                  FROM `figure_types`
-                  WHERE `type` = @Type";
-
-        var setTypeData = await connection.QueryFirstOrDefaultAsync(query, new { Type = setType });
-
-        if (setTypeData == null)
-        {
-            // setType not found in the database
-            return false;
-        }
-
-        return gender switch
-        {
-            Male => hasHabboClub ? setTypeData.mandatory_m_1 : setTypeData.mandatory_m_0,
-            Female => hasHabboClub ? setTypeData.mandatory_f_1 : setTypeData.mandatory_f_0,
-            _ => false
-        };
-    }*/
-
-    private async Task<string?> HandleColorableSetTypeAsync(bool hasHabboClub, string[] splitItem, IDbConnection connection)
+    private async Task<string> HandleColorableSetTypeAsync(bool hasHabboClub, string[] splitItem, IDbConnection connection)
     {
         var itemType = splitItem[0];
         var setId = splitItem[1];
-
         var paletteId = await GetPaletteIdForTypeAsync(itemType, connection);
+        var validatedColors = new List<string>();  // Hold validated colors
+        int? firstValidColorId = null;
 
-        // Loop through the colors and validate each one
         for (var i = 2; i < splitItem.Length; i++)
         {
-            LogMessage(splitItem[i]+" kleur");
             var colorId = int.Parse(splitItem[i]);
             bool colorIsValid = await ValidateColorAsync(colorId, paletteId, hasHabboClub, connection);
 
-            if (!colorIsValid)
+            if (colorIsValid)
             {
-                var firstValidColorId = await GetFirstValidColorAsync(paletteId, connection);
-                splitItem[i] = firstValidColorId.ToString() ?? "";
+                validatedColors.Add(colorId.ToString());  // Add the valid color to the list
+                continue;
+            }
+
+            firstValidColorId ??= await GetFirstValidColorAsync(paletteId, connection);
+
+            if (firstValidColorId.HasValue)
+            {
+                validatedColors.Add(firstValidColorId.Value.ToString());  // Add the first valid color to the list
             }
         }
 
-        return string.Join("-", splitItem);
+        return string.Join("-", new[] { itemType, setId }.Concat(validatedColors));
     }
     private async Task<int?> GetFirstValidColorAsync(int paletteId, IDbConnection connection)
     {
@@ -243,24 +225,29 @@ internal class FigureDataManager : IFigureDataManager
         {
             LogMessage($"Warning: Too many colors specified for item '{item}'. Truncating to {MaxItemComponents} components.");
             splitItem = splitItem.Take(MaxItemComponents).ToArray();
-            item = string.Join("-", splitItem);
         }
 
-        const string sql = @"SELECT id, gender, club, colorable 
+        const string sql = @"SELECT gender, club, colorable 
                           FROM figure_sets 
                           WHERE id = @Id AND set_type = @Type";
-        var parameters = new { Id = int.Parse(splitItem[1]), Type = itemType };
 
+        var parameters = new { Id = int.Parse(splitItem[1]), Type = itemType };
         var setItem = await connection.QueryFirstOrDefaultAsync(sql, parameters);
 
         if (setItem is null || (!hasHabboClub && setItem.club == 1) || (setItem.gender != Unisex && setItem.gender != gender))
         {
             return await GenerateSetByTypeAsync(itemType, connection);
         }
-        
-        return setItem.colorable 
-            ? await HandleColorableSetTypeAsync(hasHabboClub, splitItem, connection) 
-            : $"{itemType}-{setItem.Id}";
+
+        if (setItem.colorable)
+        {
+            return await HandleColorableSetTypeAsync(hasHabboClub, splitItem, connection);
+        }
+        else
+        {
+            return $"{itemType}-{splitItem[1]}";
+        }
+
     }
     private async Task<int> GetPaletteIdForTypeAsync(string setType, IDbConnection connection)
     {
@@ -301,7 +288,7 @@ internal class FigureDataManager : IFigureDataManager
 
         return $"{setType}-{setId}-{color}";
     }
-    
+
     //TODO add ICollection<ClothingParts> clothingParts
     public async Task<string> ValidateLookAsync(string look, string gender, ICollection<ClothingParts> clothingParts, bool hasHabboClub)
     {
@@ -339,12 +326,10 @@ internal class FigureDataManager : IFigureDataManager
     
             if (isValidItem)
             {
-                existingSetTypes.Add(setType);
-
                 // Check that the parts after the setType are positive integers
                 for (var i = 1; i < parts.Length; i++)
                 {
-                    if (!int.TryParse(parts[i], out var value) || value <= 0)
+                    if (!int.TryParse(parts[i], out var value) || value < 0)
                     {
                         LogMessage($"Failed: Invalid integer '{parts[i]}' in item '{item}'.");
                         isValidItem = false;
@@ -382,6 +367,9 @@ internal class FigureDataManager : IFigureDataManager
                 validatedItems.Add(await GenerateSetByTypeAsync(setType, connection));
              }
         }
+
+        LogMessage($"All Validated Items: {string.Join(", ", validatedItems)}");
+
         return string.Join(".", validatedItems);
     }
 
